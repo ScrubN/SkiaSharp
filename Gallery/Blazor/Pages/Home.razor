@@ -1,0 +1,117 @@
+﻿@page "/"
+@implements IDisposable
+@using SkiaSharpSample.Services
+@inject SampleService SampleService
+@inject IJSRuntime JS
+
+<PageTitle>SkiaSharp Gallery</PageTitle>
+
+<div class="gallery-shell">
+    <div class="filter-area">
+        <FilterPalette AllCategories="allCategories" SelectedCategories="selectedCategories"
+                       SearchText="@searchText" AllSamples="allSamples"
+                       OnSearchChanged="HandleSearchChanged" OnCategoriesChanged="HandleCategoriesChanged" />
+    </div>
+
+    @* Skeleton — same CSS column layout as the real grid *@
+    <div class="skeleton-grid" id="skeleton">
+        @for (var s = 0; s < 12; s++)
+        {
+            <div class="skeleton-card" style="animation-delay: @(s * 80)ms;">
+                <div class="skeleton-accent"></div>
+                <div class="skeleton-line wide"></div>
+                <div class="skeleton-line medium"></div>
+                <div class="skeleton-line short"></div>
+            </div>
+        }
+    </div>
+
+    @* Card grid — CSS columns handle layout, JS only reorders for NEW distribution *@
+    <div class="masonry-grid" id="masonry-container">
+        @{ var index = 0; }
+        @foreach (var sample in GetFilteredSamples())
+        {
+            var i = index++;
+            var cat = SampleManager.GetCategoryFor(sample.Category);
+            var icon = SampleManager.GetCssIcon(sample.Title);
+            var isNew = SampleManager.IsNew(sample, allSamples);
+
+            <div class="grid-item" data-is-new="@(isNew ? "true" : "false")">
+                @if (sample.IsSupported)
+                {
+                    <a href="sample/@Uri.EscapeDataString(sample.Title)" class="grid-link">
+                        <SampleCard Sample="sample" CategoryColor="@cat.Color" Icon="@icon"
+                                    Index="i" Supported="true" IsNew="isNew" />
+                    </a>
+                }
+                else
+                {
+                    <SampleCard Sample="sample" CategoryColor="@cat.Color" Icon="@icon"
+                                Index="i" Supported="false" IsNew="isNew" />
+                }
+            </div>
+        }
+    </div>
+
+    <footer class="gallery-footer">
+        SkiaSharp <strong>@SampleService.SkiaSharpVersion</strong> ·
+        HarfBuzzSharp <strong>@SampleService.HarfBuzzSharpVersion</strong>
+        @if (SampleService.BuildTimestamp is { } ts)
+        {
+            <text> · Built <strong><time datetime="@ts.UtcDateTime.ToString("o")">@ts.LocalDateTime.ToString("g")</time></strong></text>
+        }
+    </footer>
+</div>
+
+@code {
+    private string searchText = string.Empty;
+    private HashSet<string> selectedCategories = new();
+    private string[] allCategories = Array.Empty<string>();
+    private SampleBase[] allSamples = Array.Empty<SampleBase>();
+    private IJSObjectReference? jsModule;
+
+    protected override void OnInitialized()
+    {
+        allSamples = SampleService.GetAllSamples().ToArray();
+        allCategories = SampleManager.GetCategories()
+            .Select(c => c.Name)
+            .Where(name => allSamples.Any(s => s.Category == name))
+            .OrderBy(c => c)
+            .ToArray();
+        selectedCategories = new HashSet<string>(allCategories);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        jsModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./Pages/Home.razor.js");
+
+        if (firstRender)
+        {
+            await Task.Delay(600); // let skeleton shimmer be visible
+            await jsModule.InvokeVoidAsync("reveal", "#masonry-container", "#skeleton");
+        }
+        else
+        {
+            await jsModule.InvokeVoidAsync("reorder", "#masonry-container");
+        }
+    }
+
+    private IEnumerable<SampleBase> GetFilteredSamples() =>
+        SampleManager.SearchSamples(allSamples, searchText, selectedCategories, SampleSortOrder.NewestFirst);
+
+    private void HandleSearchChanged(string text)
+    {
+        searchText = text;
+        StateHasChanged();
+    }
+
+    private void HandleCategoriesChanged(HashSet<string> cats)
+    {
+        if (cats.Count == 0)
+            cats = new HashSet<string>(allCategories);
+        selectedCategories = cats;
+        StateHasChanged();
+    }
+
+    public void Dispose() { }
+}
